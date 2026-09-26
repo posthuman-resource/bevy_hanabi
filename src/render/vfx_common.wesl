@@ -1,5 +1,3 @@
-#define_import_path bevy_hanabi::vfx_common
-
 struct SimParams {
     /// Delta time in seconds since last simulation tick.
     delta_time: f32,
@@ -97,11 +95,10 @@ struct ChildInfo {
     /// Index of the effect's DispatchIndirectArgs entry in the global init indirect dispatch array.
     init_indirect_dispatch_index: u32,
     /// Number of events in the associated event buffer.
-#ifdef CHILD_INFO_EVENT_COUNT_IS_ATOMIC
+    @if(CHILD_INFO_EVENT_COUNT_IS_ATOMIC)
     event_count: atomic<i32>,
-#else
+    @else
     event_count: i32,
-#endif
 }
 
 /// Buffer storing all the ChildInfo structs for several effects.

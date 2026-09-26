@@ -679,7 +679,10 @@ impl<T: Pod + ShaderSize> BufferTable<T> {
                     let unaligned_range = base_size..(base_size + extra_size);
                     let (range, byte_offset) = round_range_start_down(unaligned_range, 8);
 
-                    let mut dst_slice = new_buffer.slice(range).get_mapped_range_mut();
+                    let mut dst_slice = new_buffer
+                        .slice(range)
+                        .get_mapped_range_mut()
+                        .expect("buffer is mapped at creation");
 
                     let base_offset = byte_offset as usize;
                     let byte_size = self.aligned_size; // single row

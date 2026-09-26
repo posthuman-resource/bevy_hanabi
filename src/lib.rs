@@ -185,7 +185,7 @@ use bevy::{
     camera::visibility::VisibilityClass,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::{extract_component::ExtractComponent, sync_world::SyncToRenderWorld},
+    render::{extract_component::ExtractComponent, sync_world::SyncToRenderWorld, RenderApp},
 };
 use rand::{RngExt as _, SeedableRng as _};
 use serde::{Deserialize, Serialize};
@@ -579,6 +579,7 @@ impl From<&PropertyInstance> for PropertyValue {
 
 /// The [`VisibilityClass`] used for all particle effects.
 #[derive(Default, Clone, Copy, Component, ExtractComponent)]
+#[extract_app(RenderApp)]
 pub struct EffectVisibilityClass;
 
 /// Particle-based visual effect instance.
@@ -858,9 +859,12 @@ impl EffectShaderSources {
         // Generate the WGSL code declaring all the attributes inside the Particle
         // struct.
         let attributes_code = particle_layout.generate_code();
+        // WESL parses the code under a disabled `@if(READ_PARENT_PARTICLE)` too, and a
+        // WGSL struct needs at least one member, so without a parent this placeholder
+        // member keeps the (unused) `ParentParticle` struct parseable.
         let parent_attributes_code = parent_layout
             .map(|layout| layout.generate_code())
-            .unwrap_or_default();
+            .unwrap_or_else(|| "    _unused: u32,".to_string());
 
         // For the renderer, assign all its inputs to the values of the attributes
         // present, or a default value.
@@ -962,19 +966,21 @@ impl EffectShaderSources {
         };
 
         // Event buffer bindings for the update pass, if the effect emits GPU events to
-        // one or more other effects.
+        // one or more other effects. Each declaration carries its own WESL
+        // `@if(EMITS_GPU_SPAWN_EVENTS)`, since an attribute applies to a single one.
         let mut emit_event_buffer_bindings_code = String::with_capacity(256);
         emit_event_buffer_bindings_code.push_str(
-            "@group(3) @binding(1) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
+            "@if(EMITS_GPU_SPAWN_EVENTS)\n@group(3) @binding(1) var<storage, read_write> child_info_buffer : ChildInfoBuffer;\n",
         );
         let mut emit_event_buffer_append_funcs_code = String::with_capacity(1024);
         let base_binding_index = 2;
         for i in 0..num_event_bindings {
             let binding_index = base_binding_index + i;
             emit_event_buffer_bindings_code.push_str(&format!(
-                "@group(3) @binding({binding_index}) var<storage, read_write> event_buffer_{i} : EventBuffer;\n"));
+                "@if(EMITS_GPU_SPAWN_EVENTS)\n@group(3) @binding({binding_index}) var<storage, read_write> event_buffer_{i} : EventBuffer;\n"));
             emit_event_buffer_append_funcs_code.push_str(&format!(
                 r##"/// Append one or more spawn events to the event buffer.
+@if(EMITS_GPU_SPAWN_EVENTS)
 fn append_spawn_events_{0}(base_child_index: u32, particle_index: u32, count: u32) {{
     // Optimize this case.
     if (count == 0u) {{
@@ -1176,7 +1182,8 @@ fn append_spawn_events_{0}(base_child_index: u32, particle_index: u32, count: u3
                     return 0_f32.to_wgsl_string();
                 })
             } else {
-                String::new()
+                // Unused (under a disabled `@if(USE_ALPHA_MASK)`), but WESL still parses it.
+                0_f32.to_wgsl_string()
             };
 
             let (flipbook_scale_code, flipbook_row_count_code) = if let Some(grid_size) =
@@ -1189,7 +1196,8 @@ fn append_spawn_events_{0}(base_child_index: u32, particle_index: u32, count: u3
                     Vec2::new(1.0 / grid_size.x as f32, 1.0 / grid_size.y as f32).to_wgsl_string();
                 (flipbook_scale_code, flipbook_row_count_code)
             } else {
-                (String::new(), String::new())
+                // Unused (under a disabled `@if(FLIPBOOK)`), but WESL still parses them.
+                (Vec2::ONE.to_wgsl_string(), 1_i32.to_wgsl_string())
             };
 
             trace!(
@@ -1554,9 +1562,9 @@ impl CompiledParticleEffect {
     }
 }
 
-const PARTICLES_INIT_SHADER_TEMPLATE: &str = include_str!("render/vfx_init.wgsl");
-const PARTICLES_UPDATE_SHADER_TEMPLATE: &str = include_str!("render/vfx_update.wgsl");
-const PARTICLES_RENDER_SHADER_TEMPLATE: &str = include_str!("render/vfx_render.wgsl");
+const PARTICLES_INIT_SHADER_TEMPLATE: &str = include_str!("render/vfx_init.wesl");
+const PARTICLES_UPDATE_SHADER_TEMPLATE: &str = include_str!("render/vfx_update.wesl");
+const PARTICLES_RENDER_SHADER_TEMPLATE: &str = include_str!("render/vfx_render.wesl");
 
 /// Trait to convert any data structure to its equivalent shader code.
 trait ShaderCode {
