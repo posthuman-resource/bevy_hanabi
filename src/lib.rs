@@ -761,12 +761,15 @@ pub struct EffectShaders {
     pub render: Handle<Shader>,
 }
 
-/// Source code (WGSL) of an effect.
+/// Source code (WESL) of an effect.
 ///
 /// The source code is generated from an [`EffectAsset`] by applying all
 /// modifiers. The resulting source code is _configured_ (the Hanabi variables
 /// `{{VARIABLE}}` are replaced with the relevant WGSL code) but is not
-/// _specialized_ (the conditional directives like `#if` are still present).
+/// _specialized_ (the `@if(...)` conditional attributes are still present, and
+/// are resolved against the pipeline's shader defs when Bevy compiles it).
+/// Code a modifier injects must use the same WESL conditionals: a naga_oil
+/// `#ifdef` directive fails to parse.
 ///
 /// This is mainly used internally by Hanabi as an intermediate step toward
 /// generating the final [`EffectShaders`], and is exposed mainly for debugging

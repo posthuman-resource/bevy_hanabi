@@ -115,9 +115,9 @@ const HANABI_COMMON_TEMPLATE_HANDLE: Handle<Shader> =
 pub struct HanabiPlugin;
 
 impl HanabiPlugin {
-    /// Create the `vfx_common.wgsl` shader with proper alignment.
+    /// Create the `vfx_common.wesl` shader with proper alignment.
     ///
-    /// This creates a new [`Shader`] from the `vfx_common.wgsl` template file,
+    /// This creates a new [`Shader`] from the `vfx_common.wesl` template file,
     /// by applying the given alignment for storage buffers. This produces a
     /// shader ready for the specific GPU device associated with that
     /// alignment.
@@ -142,9 +142,9 @@ impl HanabiPlugin {
         Shader::from_wesl(common_code, "embedded://bevy_hanabi/vfx_common.wesl")
     }
 
-    /// Create the `vfx_indirect.wgsl` shader with proper alignment.
+    /// Create the `vfx_indirect.wesl` shader with proper alignment.
     ///
-    /// This creates a new [`Shader`] from the `vfx_indirect.wgsl` template
+    /// This creates a new [`Shader`] from the `vfx_indirect.wesl` template
     /// file, by applying the given alignment for storage buffers. This
     /// produces a shader ready for the specific GPU device associated with
     /// that alignment.
@@ -170,9 +170,9 @@ impl HanabiPlugin {
         )
     }
 
-    /// Create the `vfx_prefix_sum.wgsl` shader.
+    /// Create the `vfx_prefix_sum.wesl` shader.
     ///
-    /// This creates a new [`Shader`] from the `vfx_prefix_sum.wgsl` template
+    /// This creates a new [`Shader`] from the `vfx_prefix_sum.wesl` template
     /// file.
     pub(crate) fn make_prefix_sum_shader() -> Shader {
         let prefix_sum_code = include_str!("render/vfx_prefix_sum.wesl");
@@ -258,7 +258,7 @@ impl Plugin for HanabiPlugin {
             info!("Initializing Hanabi for GPU adapter {}", adapter_name);
         }
 
-        // Insert the properly aligned `vfx_common.wgsl` shader into Assets<Shader>, so
+        // Insert the properly aligned `vfx_common.wesl` shader into Assets<Shader>, so
         // that the automated Bevy shader processing finds it as an import. This is used
         // for init/update/render shaders (but not the indirect one).
         {
@@ -271,7 +271,7 @@ impl Plugin for HanabiPlugin {
                 .unwrap();
         }
 
-        // Insert the two variants of the properly aligned `vfx_indirect.wgsl` shaders
+        // Insert the two variants of the properly aligned `vfx_indirect.wesl` shaders
         // into Assets<Shader>.
         let (
             indirect_shader_noevent,
