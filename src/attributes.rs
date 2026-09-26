@@ -2256,7 +2256,7 @@ mod tests {
                     );
                 }
 
-                let d = s.to_dynamic_struct();
+                let d = s.to_dynamic_struct().unwrap();
                 assert_eq!(
                     TypeRegistration::of::<Attribute>().type_id(),
                     d.get_represented_type_info().unwrap().type_id()

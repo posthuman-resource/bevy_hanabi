@@ -1883,19 +1883,22 @@ fn update_properties_from_asset(
 mod tests {
     use std::ops::DerefMut;
 
+    use bevy::asset::uuid::Uuid;
     use bevy::{
         asset::{
             io::{
                 memory::{Dir, MemoryAssetReader},
                 AssetSourceBuilder, AssetSourceBuilders, AssetSourceId,
             },
-            AssetServerMode, LoadState, UnapprovedPathMode,
+            AssetServerMode, UnapprovedPathMode,
         },
         camera::visibility::{VisibilityPlugin, VisibilitySystems},
-        shader::ShaderLoader,
+        shader::{
+            ShaderCache as BevyShaderCache, ShaderCacheError, ShaderCacheSource, ShaderDefVal,
+            ShaderImport,
+        },
         tasks::{IoTaskPool, TaskPoolBuilder},
     };
-    use naga_oil::compose::{Composer, NagaModuleDescriptor, ShaderDefValue};
 
     use super::*;
     use crate::spawn::new_rng;
@@ -2192,6 +2195,43 @@ else { return c1; }
         let res = EffectShaderSources::generate(&asset, None, 0);
         assert!(res.is_ok());
         let shader_source = res.unwrap();
+
+        // The shaders Bevy's renderer registers, `bevy_render::view` among them, from a
+        // headless app with no GPU backend.
+        let bevy_shaders = {
+            let mut app = App::new();
+            app.add_plugins(
+                DefaultPlugins
+                    .set(bevy::render::RenderPlugin {
+                        render_creation: bevy::render::settings::WgpuSettings {
+                            backends: None,
+                            ..default()
+                        }
+                        .into(),
+                        ..default()
+                    })
+                    .disable::<bevy::winit::WinitPlugin>()
+                    .disable::<bevy::log::LogPlugin>(),
+            );
+            let view_import = ShaderImport::Custom("bevy_render::view".into());
+            // It takes a decent amount of time to load async the assets, even if embedded
+            let mut max_frames = 10000;
+            loop {
+                app.update();
+                let shaders = app.world().resource::<Assets<Shader>>();
+                if shaders.iter().any(|(_, s)| s.import_path == view_import) {
+                    break;
+                }
+                max_frames -= 1;
+                assert!(max_frames > 0);
+            }
+            app.world()
+                .resource::<Assets<Shader>>()
+                .iter()
+                .map(|(id, shader)| (id, shader.clone()))
+                .collect::<Vec<_>>()
+        };
+
         for (name, code) in [
             ("Init", shader_source.init_shader_source),
             ("Update", shader_source.update_shader_source),
@@ -2199,119 +2239,59 @@ else { return c1; }
         ] {
             println!("{} shader:\n\n{}", name, code);
 
-            let mut shader_defs = std::collections::HashMap::<String, ShaderDefValue>::new();
-            shader_defs.insert("LOCAL_SPACE_SIMULATION".into(), ShaderDefValue::Bool(true));
-            shader_defs.insert("NEEDS_UV".into(), ShaderDefValue::Bool(true));
-            shader_defs.insert("NEEDS_NORMAL".into(), ShaderDefValue::Bool(false));
-            shader_defs.insert(
-                "NEEDS_PARTICLE_FRAGMENT".into(),
-                ShaderDefValue::Bool(false),
-            );
-            shader_defs.insert(
-                "PARTICLE_SCREEN_SPACE_SIZE".into(),
-                ShaderDefValue::Bool(true),
-            );
+            let mut shader_defs = vec![
+                ShaderDefVal::Bool("LOCAL_SPACE_SIMULATION".into(), true),
+                ShaderDefVal::Bool("NEEDS_UV".into(), true),
+                ShaderDefVal::Bool("NEEDS_NORMAL".into(), false),
+                ShaderDefVal::Bool("NEEDS_PARTICLE_FRAGMENT".into(), false),
+                ShaderDefVal::Bool("PARTICLE_SCREEN_SPACE_SIZE".into(), true),
+            ];
             if name == "Update" {
-                shader_defs.insert("EM_MAX_SPAWN_ATOMIC".into(), ShaderDefValue::Bool(true));
-            }
-            let mut composer = Composer::default();
-
-            // Import bevy_render::view for the render shader
-            {
-                // It's reasonably hard to retrieve the source code for view.wgsl in
-                // bevy_render. We use a few tricks to get a Shader that we can
-                // then convert into a composable module (which is how imports work in Bevy
-                // itself).
-                IoTaskPool::get_or_init(|| {
-                    TaskPoolBuilder::default()
-                        .num_threads(1)
-                        .thread_name("Hanabi test IO Task Pool".to_string())
-                        .build()
-                });
-                let mut dummy_app = App::new();
-                dummy_app.add_plugins(bevy::asset::AssetPlugin::default());
-                dummy_app
-                    .init_asset::<Shader>()
-                    .init_asset_loader::<ShaderLoader>();
-                dummy_app.add_plugins(bevy::render::view::ViewPlugin);
-                let asset_server = dummy_app.world().resource::<AssetServer>();
-                let view_shader_handle =
-                    asset_server.load::<Shader>("embedded://bevy_render/view/view.wgsl");
-
-                // Need at least one frame tick for the loaded asset to send a message to the
-                // asset server to get registered
-                let mut max_frames = 10000; // it takes a decent amount of time to load async the asset, even if embedded
-                while max_frames > 0 {
-                    dummy_app.update();
-
-                    let asset_server = dummy_app.world().resource::<AssetServer>();
-                    let load_state = asset_server.get_load_state(&view_shader_handle).unwrap();
-                    if let LoadState::Failed(err) = load_state {
-                        panic!("Load failed: {:?}", err);
-                    }
-                    if matches!(load_state, LoadState::Loaded) {
-                        break;
-                    }
-
-                    max_frames -= 1;
-                }
-                assert!(max_frames > 0);
-
-                let shaders = dummy_app.world().get_resource::<Assets<Shader>>().unwrap();
-                for (id, shader) in shaders.iter() {
-                    println!("[{id:?}] {shader:?}");
-                }
-                let view_shader = shaders.get(&view_shader_handle).unwrap();
-
-                let res = composer.add_composable_module(view_shader.into());
-                assert!(res.is_ok());
+                shader_defs.push(ShaderDefVal::Bool("EM_MAX_SPAWN_ATOMIC".into(), true));
             }
 
+            // Compose the shader through Bevy's own WESL shader cache, like the
+            // PipelineCache does at runtime, with every shader it can import.
+            let mut cache = BevyShaderCache::<String, ()>::new((), |_, source, _| match source {
+                ShaderCacheSource::Wgsl(wgsl) => Ok(wgsl),
+                ShaderCacheSource::SpirV(_) => {
+                    Err(ShaderCacheError::ProcessShaderError("SPIR-V".into()))
+                }
+            });
+            for (id, shader) in bevy_shaders.iter() {
+                cache.set_shader(*id, shader.clone());
+            }
             // Import bevy_hanabi::vfx_common
-            {
-                let min_storage_buffer_offset_alignment = 256;
-                let common_shader =
-                    HanabiPlugin::make_common_shader(min_storage_buffer_offset_alignment);
-                let res = composer.add_composable_module((&common_shader).into());
-                assert!(res.is_ok());
-            }
+            let min_storage_buffer_offset_alignment = 256;
+            let common_shader =
+                HanabiPlugin::make_common_shader(min_storage_buffer_offset_alignment);
+            cache.set_shader(
+                AssetId::Uuid {
+                    uuid: Uuid::from_u128(1),
+                },
+                common_shader,
+            );
+            let id = AssetId::Uuid {
+                uuid: Uuid::from_u128(2),
+            };
+            cache.set_shader(
+                id,
+                Shader::from_wesl(code.clone(), format!("hanabi/test_{}.wesl", name)),
+            );
 
-            match composer.make_naga_module(NagaModuleDescriptor {
-                source: &code[..],
-                file_path: &format!("{}.wgsl", name),
-                shader_defs,
-                ..Default::default()
-            }) {
-                Ok(module) => {
-                    // println!("shader: {:#?}", module);
-                    let info = naga::valid::Validator::new(
-                        naga::valid::ValidationFlags::all(),
-                        naga::valid::Capabilities::default(),
-                    )
-                    .validate(&module)
-                    .unwrap();
-                    let wgsl = naga::back::wgsl::write_string(
-                        &module,
-                        &info,
-                        naga::back::wgsl::WriterFlags::EXPLICIT_TYPES,
-                    )
-                    .unwrap();
-                    println!("Final wgsl from naga:\n\n{}", wgsl);
-                    // Ok(module)
-                }
-                Err(e) => {
-                    panic!("{}", e.emit_to_string(&composer));
-                    // Err(e)
-                }
-            }
+            let wgsl = match cache.get(0, id, &shader_defs) {
+                Ok(wgsl) => wgsl,
+                Err(e) => panic!("{} shader failed to compose: {}", name, e),
+            };
+            println!("Composed {} shader:\n\n{}", name, wgsl);
 
-            // let mut frontend = Frontend::new();
-            // let res = frontend.parse(code);
-            // if let Err(err) = &res {
-            //     println!("{} code: {}", name, code);
-            //     println!("Err: {:?}", err);
-            // }
-            // assert!(res.is_ok());
+            let module = naga::front::wgsl::parse_str(&wgsl).unwrap();
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .unwrap();
         }
     }
 

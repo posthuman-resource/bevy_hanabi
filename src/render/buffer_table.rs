@@ -1098,7 +1098,7 @@ mod gpu_tests {
         });
         let result = futures::executor::block_on(rx);
         assert!(result.is_ok());
-        slice.get_mapped_range()
+        slice.get_mapped_range().unwrap()
     }
 
     /// Submit a command buffer to GPU and wait for completion.

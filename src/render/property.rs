@@ -1025,7 +1025,7 @@ mod gpu_tests {
             timeout: None,
         });
         futures::executor::block_on(rx).unwrap().unwrap();
-        buffer.get_mapped_range()
+        buffer.get_mapped_range().unwrap()
     }
 
     #[test]
