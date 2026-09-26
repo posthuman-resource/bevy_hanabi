@@ -24,7 +24,8 @@ struct VertexOutput {
     @if(NEEDS_NORMAL)
     @location(2) normal: vec3<f32>,
     @if(NEEDS_PARTICLE_FRAGMENT)
-    @location(3) slab_particle_index: u32,
+    // naga 30 no longer defaults integer varyings to flat interpolation.
+    @location(3) @interpolate(flat) slab_particle_index: u32,
 }
 
 @group(0) @binding(0) var<uniform> view: View;
