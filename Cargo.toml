@@ -74,7 +74,7 @@ getrandom = { version = "0.4", default-features = false, features = [
 ] }
 
 [dependencies.bevy]
-version = "0.20.0-rc.1"
+version = "0.20.0-rc.2"
 default-features = false
 features = [
   "bevy_core_pipeline",
@@ -90,7 +90,7 @@ all-features = true
 [dev-dependencies]
 # Enable all features by default in examples to make it easier to run them and to use
 # extra features like text rendering or gizmos, which are example-specific.
-bevy = { version = "0.20.0-rc.1", default-features = true }
+bevy = { version = "0.20.0-rc.2", default-features = true }
 
 # For procedural texture generation in examples
 noise = "0.9"
